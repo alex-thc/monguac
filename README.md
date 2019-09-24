@@ -1,25 +1,31 @@
 This is a fork of MongoDB 4.0.12 to allow running mongoS on top of a single replica set *without* sharding - the replica set doesn't know anything about sharding and no config servers. It can be useful for applications that only support connections to standalone, or as a connection-pooling proxy.
 
-Although the code passes some tests, it's only a *prototype*. *Use it at your own risk*, preferably not in critical production systems. It is not officially supported, and actually not supported it all.
+Although the code passes some tests, it's only a *prototype*. **Use it at your own risk**, preferably not in critical production systems. It is not officially supported, and actually not supported it all.
 
 Changes from the mainstream:
-* mongoD: assumes a dummy shard name when contacted by mongoS (for currentOp)
-* mongoS: support for "hostdb" and "hostInternalUser" parameters
+- mongoD: assumes a dummy shard name when contacted by mongoS (for currentOp)
+- mongoS: support for "hostdb" and "hostInternalUser" parameters
 
 How to build:
-python2 buildscripts/scons.py --disable-warnings-as-errors --ssl mongos
-python2 buildscripts/scons.py --disable-warnings-as-errors --ssl mongod
+- clone repo and checkout the "new" branch
+- python2 buildscripts/scons.py --disable-warnings-as-errors --ssl mongos
+- python2 buildscripts/scons.py --disable-warnings-as-errors --ssl mongod
 
 How to run:
-_Make sure you use the binaries you've built and not the ones in your $PATH_
-* No authentication
+
+*Make sure you use the binaries you've built and not the ones in your $PATH*
+
+**No authentication**
+
 1) Start and configure a replica set as you normally would
-2) ./mongos --hostdb <RS_NAME>/<HOST1>:<PORT1>,<HOST2>:<PORT2>
+2) ./mongos --hostdb myRS/host1:port,host2:port
 3) connect to mongoS and enjoy
 
-* Authentication
+**Authentication**
+
 1) Start and configure a replica set with authentication as you normally would
 2) Add an internal mongoS user on the replica set
+```
 use admin
 db.createUser(
    {
@@ -28,18 +34,25 @@ db.createUser(
      roles: [ “__system”]
    }
 )
+```
 3) Create a key file with the mongos password in it
+```
 echo "<cleartext password>" > mongos_key
-4) ./mongos --hostdb <RS_NAME>/<HOST1>:<PORT1>,<HOST2>:<PORT2> --keyFile mongos_key --hostInternalUser mongos
+```
+4) ./mongos --hostdb myRS/host1:port,host2:port --keyFile mongos_key --hostInternalUser mongos
 5) connect to mongoS and enjoy
 
-* SSL
+**SSL**
+
 Assuming there's a replica set with authentication and SSL configured (but client certificate is not required):
+
 1) Add an internal mongoS user as in the example above
 2) Generate a certificate for mongoS, e.g.
+```
 openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 -keyout server.key -out server.crt
 cat server.key server.crt > mongos.pem
-2) ./mongos --hostdb <RS_NAME>/<HOST1>:<PORT1>,<HOST2>:<PORT2> --keyFile mongos_key --hostInternalUser mongos --sslMode requireSSL --setParameter sslWithholdClientCertificate=true --sslPEMKeyFile mongos.pem 
+```
+2) ./mongos --hostdb myRS/host1:port,host2:port --keyFile mongos_key --hostInternalUser mongos --sslMode requireSSL --setParameter sslWithholdClientCertificate=true --sslPEMKeyFile mongos.pem 
 3) connect to mongoS with SSL and enjoy
 
 What doesn't work:
