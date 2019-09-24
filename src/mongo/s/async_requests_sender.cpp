@@ -240,6 +240,7 @@ Status AsyncRequestsSender::_scheduleRequest(size_t remoteIndex) {
     invariant(!remote.swResponse);
 
     Status resolveStatus = remote.resolveShardIdToHostAndPort(this, _readPreference);
+
     if (!resolveStatus.isOK()) {
         return resolveStatus;
     }

@@ -74,6 +74,25 @@ public:
              BSONObjBuilder& result) override {
         const NamespaceString nss(parseNs(dbName, cmdObj));
 
+        if (serverGlobalParams.hostModeRouterEnabled)
+        {
+            uassert(ErrorCodes::InvalidOptions,
+                    "specify size:<n> when capped is true",
+                    !cmdObj["capped"].trueValue() || cmdObj["size"].isNumber() ||
+                        cmdObj.hasField("$nExtents"));
+
+            BSONObjIterator cmdIter(cmdObj);
+            invariant(cmdIter.more());  // At least the command namespace should be present
+            cmdIter.next();
+            BSONObjBuilder optionsBuilder;
+            CommandHelpers::filterCommandRequestForPassthrough(&cmdIter, &optionsBuilder);
+            CollectionOptions opts;
+            uassertStatusOK(opts.parse(optionsBuilder.obj()));
+            _createCollectionOnShard(opCtx, Grid::get(opCtx)->shardRegistry()->getHostShard()->getId(), nss, opts);
+
+            return true;
+        }
+
         uassertStatusOK(createShardDatabase(opCtx, dbName));
 
         uassert(ErrorCodes::InvalidOptions,
@@ -103,7 +122,42 @@ public:
                 Shard::RetryPolicy::kIdempotent);
 
         uassertStatusOK(Shard::CommandResponse::getEffectiveStatus(response));
+
         return true;
+    }
+private:
+    static void _createCollectionOnShard(OperationContext* opCtx,
+                                                const ShardId& shardId,
+                                                const NamespaceString& ns,
+                                                const CollectionOptions& collOptions) {
+        auto shardRegistry = Grid::get(opCtx)->shardRegistry();
+
+        auto shard = uassertStatusOK(shardRegistry->getShard(opCtx, shardId));
+
+        BSONObjBuilder createCmdBuilder;
+        createCmdBuilder.append("create", ns.coll());
+        collOptions.appendBSON(&createCmdBuilder);
+        createCmdBuilder.append(WriteConcernOptions::kWriteConcernField, opCtx->getWriteConcern().toBSON());
+        auto swResponse = shard->runCommandWithFixedRetryAttempts(
+            opCtx,
+            ReadPreferenceSetting{ReadPreference::PrimaryOnly},
+            ns.db().toString(),
+            createCmdBuilder.obj(),
+            Shard::RetryPolicy::kIdempotent);
+
+        auto createStatus = Shard::CommandResponse::getEffectiveStatus(swResponse);
+        if (!createStatus.isOK() && createStatus != ErrorCodes::NamespaceExists) {
+            uassertStatusOK(createStatus);
+        }
+
+        // TODO: SERVER-33094 use UUID returned to write config.collections entries.
+
+        // Make sure to advance the opTime if writes didn't occur during the execution of this
+        // command. This is to ensure that this request will wait for the opTime that at least
+        // reflects the current state (that this command observed) while waiting for replication
+        // to satisfy the write concern.
+        //TODO: XXZ (not sure if we need to do anything here)
+        //repl::ReplClientInfo::forClient(opCtx->getClient()).setLastOpToSystemLastOpTime(opCtx);
     }
 
 } createCmd;

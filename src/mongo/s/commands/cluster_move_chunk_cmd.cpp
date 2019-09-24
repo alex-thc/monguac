@@ -97,6 +97,9 @@ public:
                    const BSONObj& cmdObj,
                    std::string& errmsg,
                    BSONObjBuilder& result) override {
+        if (serverGlobalParams.hostModeRouterEnabled)
+            uasserted(ErrorCodes::CommandNotSupported, "comand not allowed in this configuration");
+        
         Timer t;
 
         const NamespaceString nss(parseNs(dbname, cmdObj));

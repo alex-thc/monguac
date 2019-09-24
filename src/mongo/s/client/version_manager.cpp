@@ -174,6 +174,10 @@ DBClientBase* getVersionable(DBClientBase* conn) {
  * mongos-specific behavior on mongod (auditing and replication information in commands)
  */
 bool initShardVersionEmptyNS(OperationContext* opCtx, DBClientBase* conn_in) {
+    // noop for host mode as the underlying shard has no idea of sharding
+    if (serverGlobalParams.hostModeRouterEnabled)
+        return true;
+
     try {
         // May throw if replica set primary is down
         DBClientBase* const conn = getVersionable(conn_in);
@@ -247,6 +251,10 @@ bool checkShardVersion(OperationContext* opCtx,
                        shared_ptr<ChunkManager> refManager,
                        bool authoritative,
                        int tryNumber) {
+    // noop for host mode as the underlying shard has no idea of sharding
+    if (serverGlobalParams.hostModeRouterEnabled)
+        return true;
+
     // Empty namespaces are special - we require initialization but not versioning
     if (ns.size() == 0) {
         return initShardVersionEmptyNS(opCtx, conn_in);

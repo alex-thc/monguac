@@ -47,6 +47,8 @@ struct ServerGlobalParams {
     std::string binaryName;  // mongod or mongos
     std::string cwd;         // cwd of when process started
 
+    bool hostModeRouterEnabled = false; // special flag to identify that we're in the host mongos mode
+
     int port = DefaultDBPort;  // --port
     enum { DefaultDBPort = 27017, ConfigServerPort = 27019, ShardServerPort = 27018 };
     bool isDefaultPort() const {

@@ -77,6 +77,9 @@ public:
              const std::string& dbname,
              const BSONObj& cmdObj,
              BSONObjBuilder& result) override {
+        if (serverGlobalParams.hostModeRouterEnabled)
+            uasserted(ErrorCodes::CommandNotSupported, "comand not allowed in this configuration");
+
         auto parsedRequest = uassertStatusOK(AddShardRequest::parseFromMongosCommand(cmdObj));
 
         auto configShard = Grid::get(opCtx)->shardRegistry()->getConfigShard();

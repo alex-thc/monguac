@@ -82,6 +82,10 @@ StatusWith<ConfigServerMetadata> ConfigServerMetadata::readFromMetadata(
 }
 
 void ConfigServerMetadata::writeToMetadata(BSONObjBuilder* builder) const {
+    // we don't care for config server metadata
+    if (serverGlobalParams.hostModeRouterEnabled)
+        return;
+    
     invariant(_opTime);
     BSONObjBuilder configMetadataBuilder(builder->subobjStart(fieldName()));
     _opTime->append(&configMetadataBuilder, kOpTimeFieldName);

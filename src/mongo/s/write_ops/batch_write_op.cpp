@@ -38,6 +38,7 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/util/transitional_tools_do_not_use/vector_spooling.h"
+#include "mongo/db/server_options.h"
 
 namespace mongo {
 
@@ -464,7 +465,8 @@ BatchedCommandRequest BatchWriteOp::buildBatchRequest(
         return wcb;
     }());
 
-    request.setShardVersion(targetedBatch.getEndpoint().shardVersion);
+    if (! serverGlobalParams.hostModeRouterEnabled)
+        request.setShardVersion(targetedBatch.getEndpoint().shardVersion);
 
     if (_clientRequest.hasWriteConcern()) {
         if (_clientRequest.isVerboseWC()) {

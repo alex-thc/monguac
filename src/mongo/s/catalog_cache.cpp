@@ -47,6 +47,8 @@
 #include "mongo/util/log.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/timer.h"
+#include "mongo/base/status_with.h"
+#include "mongo/db/server_options.h"
 
 namespace mongo {
 namespace {
@@ -121,6 +123,30 @@ CatalogCache::~CatalogCache() = default;
 
 StatusWith<CachedDatabaseInfo> CatalogCache::getDatabase(OperationContext* opCtx,
                                                          StringData dbName) {
+
+    // in host mode all databases live on the host shard which is effectively the primary shard for
+    // any database we are being inquired about
+    if (serverGlobalParams.hostModeRouterEnabled) {
+        auto& dbEntry = _databases[dbName];
+        if (!dbEntry) {
+            stdx::unique_lock<stdx::mutex> ul(_mutex);
+
+            if (! dbEntry) {
+                dbEntry = std::make_shared<DatabaseInfoEntry>();
+                dbEntry->dbt = DatabaseType::fromBSON(
+                    BSON(DatabaseType::name(dbName.toString())
+                        << DatabaseType::primary(ShardRegistry::kHostServerShardId.toString())
+                        << DatabaseType::sharded(false))).getValue();
+            }
+            ul.unlock();
+        }
+
+        auto primaryShard = uassertStatusOK(
+                Grid::get(opCtx)->shardRegistry()->getShard(opCtx, dbEntry->dbt->getPrimary()));
+
+        return {CachedDatabaseInfo(*dbEntry->dbt, std::move(primaryShard))};
+    }
+    
     try {
         while (true) {
             stdx::unique_lock<stdx::mutex> ul(_mutex);
@@ -196,6 +222,17 @@ StatusWith<CachedCollectionRoutingInfo> CatalogCache::getCollectionRoutingInfoAt
 
 CatalogCache::RefreshResult CatalogCache::_getCollectionRoutingInfoAt(
     OperationContext* opCtx, const NamespaceString& nss, boost::optional<Timestamp> atClusterTime) {
+
+    // in host mode there is never any routing info as everything is unsharded
+    if (serverGlobalParams.hostModeRouterEnabled) {   
+        RefreshAction refreshActionTaken(RefreshAction::kDidNotPerformRefresh);
+         
+        const auto swDbInfo = getDatabase(opCtx, nss.db());
+
+        const auto dbInfo = std::move(swDbInfo.getValue());
+        return {CachedCollectionRoutingInfo(nss, dbInfo, nullptr), refreshActionTaken};
+    }
+
     // This default value can cause a single unnecessary extra refresh if this thread did do the
     // refresh but the refresh failed, or if the database or collection was not found, but only if
     // the caller is getCollectionRoutingInfoWithRefresh with the parameter

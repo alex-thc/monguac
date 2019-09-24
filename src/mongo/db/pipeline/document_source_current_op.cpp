@@ -122,6 +122,10 @@ DocumentSource::GetNextResult DocumentSourceCurrentOp::getNext() {
         if (pExpCtx->fromMongos) {
             _shardName = pExpCtx->mongoProcessInterface->getShardName(pExpCtx->opCtx);
 
+            //TODO: XXZ (need to assume the fake shard name)
+            if ((serverGlobalParams.clusterRole != ClusterRole::ShardServer) && _shardName.empty())
+                _shardName = "shard";
+
             uassert(40465,
                     "Aggregation request specified 'fromMongos' but unable to retrieve shard name "
                     "for $currentOp pipeline stage.",

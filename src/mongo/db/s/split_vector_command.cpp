@@ -90,7 +90,9 @@ public:
                    const BSONObj& jsobj,
                    string& errmsg,
                    BSONObjBuilder& result) override {
-
+        if (serverGlobalParams.hostModeRouterEnabled)
+            uasserted(ErrorCodes::CommandNotSupported, "comand not allowed in this configuration");
+        
         const NamespaceString nss = NamespaceString(parseNs(dbname, jsobj));
         BSONObj keyPattern = jsobj.getObjectField("keyPattern");
 

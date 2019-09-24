@@ -38,7 +38,9 @@
     };
 
     var checkImplicitCreate = function(createIndexResult, isMongos) {
-        let allowImplicit = !isMongos;
+        //TODO: XXZ
+        //let allowImplicit = !isMongos;
+        let allowImplicit = true;
         assert.eq(allowImplicit, createIndexResult.createdCollectionAutomatically);
     };
 

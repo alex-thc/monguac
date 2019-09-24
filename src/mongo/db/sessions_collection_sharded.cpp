@@ -83,7 +83,11 @@ Status SessionsCollectionSharded::setupSessionsCollection(OperationContext* opCt
 }
 
 Status SessionsCollectionSharded::checkSessionsCollectionExists(OperationContext* opCtx) {
-    return _checkCacheForSessionsCollection(opCtx);
+    //TODO: XXZ (not sure if this one does the right thing here)
+    if (serverGlobalParams.hostModeRouterEnabled)
+        return Status::OK(); 
+    else
+        return _checkCacheForSessionsCollection(opCtx);
 }
 
 Status SessionsCollectionSharded::refreshSessions(OperationContext* opCtx,

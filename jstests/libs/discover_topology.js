@@ -48,8 +48,9 @@ var DiscoverTopology = (function() {
         const connectFn =
             options.hasOwnProperty('connectFn') ? options.connectFn : kDefaultConnectFn;
 
-        const configsvrConn = connectFn(getConfigServerConnectionString());
-        const configsvrHosts = getDataMemberConnectionStrings(configsvrConn);
+        // const configsvrConn = connectFn(getConfigServerConnectionString());
+        // const configsvrHosts = getDataMemberConnectionStrings(configsvrConn);
+        const configsvrHosts = "";
 
         const shards = assert.commandWorked(conn.adminCommand({listShards: 1})).shards;
         const shardHosts = {};

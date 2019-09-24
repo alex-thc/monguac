@@ -80,6 +80,12 @@ public:
                 "have to pass 1 as db parameter",
                 cmdObj.firstElement().isNumber() && cmdObj.firstElement().number() == 1);
 
+        if (serverGlobalParams.hostModeRouterEnabled) {
+            auto cmdResponse = _dropDatabaseFromShard(opCtx, Grid::get(opCtx)->shardRegistry()->getHostShard()->getId(), dbname);
+            CommandHelpers::filterCommandReplyForPassthrough(cmdResponse.response, &result);
+            return true;
+        }
+
         // Invalidate the database metadata so the next access kicks off a full reload, even if
         // sending the command to the config server fails due to e.g. a NetworkError.
         ON_BLOCK_EXIT([opCtx, dbname] { Grid::get(opCtx)->catalogCache()->purgeDatabase(dbname); });
@@ -95,8 +101,40 @@ public:
             Shard::RetryPolicy::kIdempotent));
 
         CommandHelpers::filterCommandReplyForPassthrough(cmdResponse.response, &result);
+
         return true;
     }
+private:
+    /**
+     * Sends the 'dropDatabase' command for the specified database to the specified shard. Throws
+     * DBException on failure.
+     */
+    static Shard::CommandResponse _dropDatabaseFromShard(OperationContext* opCtx,
+                                       const ShardId& shardId,
+                                       const std::string& dbName) {
+
+        const auto dropDatabaseCommandBSON = [opCtx] {
+            BSONObjBuilder builder;
+            builder.append("dropDatabase", 1);
+            builder.append(WriteConcernOptions::kWriteConcernField,
+                           opCtx->getWriteConcern().toBSON());
+            return builder.obj();
+        }();
+
+        const auto shard =
+            uassertStatusOK(Grid::get(opCtx)->shardRegistry()->getShard(opCtx, shardId));
+        auto cmdDropDatabaseResult = uassertStatusOK(shard->runCommandWithFixedRetryAttempts(
+            opCtx,
+            ReadPreferenceSetting{ReadPreference::PrimaryOnly},
+            dbName,
+            dropDatabaseCommandBSON,
+            Shard::RetryPolicy::kIdempotent));
+
+        uassertStatusOK(cmdDropDatabaseResult.commandStatus);
+        uassertStatusOK(cmdDropDatabaseResult.writeConcernStatus);
+
+        return cmdDropDatabaseResult;
+    };
 
 } clusterDropDatabaseCmd;
 

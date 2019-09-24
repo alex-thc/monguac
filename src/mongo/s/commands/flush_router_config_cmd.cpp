@@ -78,6 +78,9 @@ public:
              const std::string& dbname,
              const BSONObj& cmdObj,
              BSONObjBuilder& result) override {
+        if (serverGlobalParams.hostModeRouterEnabled)
+            uasserted(ErrorCodes::CommandNotSupported, "comand not allowed in this configuration");
+
         auto const grid = Grid::get(opCtx);
         uassert(ErrorCodes::ShardingStateNotInitialized,
                 "Sharding is not enabled",

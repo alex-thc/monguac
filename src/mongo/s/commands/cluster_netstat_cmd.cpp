@@ -71,7 +71,8 @@ public:
              const BSONObj& cmdObj,
              BSONObjBuilder& result) override {
         auto const shardRegistry = Grid::get(opCtx)->shardRegistry();
-        result.append("configserver", shardRegistry->getConfigServerConnectionString().toString());
+        if (! serverGlobalParams.hostModeRouterEnabled)
+            result.append("configserver", shardRegistry->getConfigServerConnectionString().toString());
         result.append("isdbgrid", 1);
         return true;
     }

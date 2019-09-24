@@ -101,7 +101,7 @@ std::vector<AsyncRequestsSender::Request> buildUnversionedRequestsForShards(
     std::vector<ShardId> shardIds, const BSONObj& cmdObj) {
     auto cmdToSend = cmdObj;
     if (!cmdToSend.hasField(kAllowImplicitCollectionCreation)) {
-        cmdToSend = appendAllowImplicitCreate(cmdToSend, false);
+        cmdToSend = appendAllowImplicitCreate(cmdToSend, serverGlobalParams.hostModeRouterEnabled ? true : false); // need to allow implicit creation by default in host mode
     }
 
     std::vector<AsyncRequestsSender::Request> requests;
@@ -126,6 +126,12 @@ std::vector<AsyncRequestsSender::Request> buildVersionedRequestsForTargetedShard
     const BSONObj& collation) {
     if (!routingInfo.cm()) {
         // The collection is unsharded. Target only the primary shard for the database.
+
+        // Do a simple thing for host mode
+        if (serverGlobalParams.hostModeRouterEnabled)
+            return buildUnversionedRequestsForShards(
+                {routingInfo.db().primaryId()},
+                cmdObj);
 
         // Attach shardVersion "UNSHARDED", unless targeting the config server.
         const auto cmdObjWithShardVersion = (routingInfo.db().primaryId() != "config")

@@ -199,11 +199,15 @@ std::vector<std::pair<ShardId, BSONObj>> constructRequestsForShards(
         BSONObjBuilder cmdBuilder;
         qrToForward->asFindCommand(&cmdBuilder);
 
-        if (routingInfo.cm()) {
-            routingInfo.cm()->getVersion(shardId).appendToCommand(&cmdBuilder);
-        } else if (!query.nss().isOnInternalDb()) {
-            ChunkVersion::UNSHARDED().appendToCommand(&cmdBuilder);
+        if (! serverGlobalParams.hostModeRouterEnabled) {
+            if (routingInfo.cm()) {
+                routingInfo.cm()->getVersion(shardId).appendToCommand(&cmdBuilder);
+            } else if (!query.nss().isOnInternalDb()) {
+                ChunkVersion::UNSHARDED().appendToCommand(&cmdBuilder);
+            }
         }
+
+        LOG(1) << "Shard request for shard " << shardId.toString() << " : " << cmdBuilder.asTempObj().toString();
 
         // TODO SERVER-33702: standardize method for attaching txnNumber through mongos.
         if (opCtx->getTxnNumber()) {

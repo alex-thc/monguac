@@ -78,6 +78,8 @@ std::unique_ptr<executor::TaskExecutor> makeShardingTaskExecutor(
  */
 Status initializeGlobalShardingState(OperationContext* opCtx,
                                      const ConnectionString& configCS,
+                                     const ConnectionString& hostCS,
+                                     const std::string& hostInternalUser,
                                      StringData distLockProcessId,
                                      std::unique_ptr<ShardFactory> shardFactory,
                                      std::unique_ptr<CatalogCache> catalogCache,

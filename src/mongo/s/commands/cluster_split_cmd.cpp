@@ -130,6 +130,9 @@ public:
                    const BSONObj& cmdObj,
                    std::string& errmsg,
                    BSONObjBuilder& result) override {
+        if (serverGlobalParams.hostModeRouterEnabled)
+            uasserted(ErrorCodes::CommandNotSupported, "comand not allowed in this configuration");
+
         const NamespaceString nss(parseNs(dbname, cmdObj));
 
         auto routingInfo = uassertStatusOK(

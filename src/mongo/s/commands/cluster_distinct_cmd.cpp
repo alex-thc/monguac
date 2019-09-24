@@ -143,12 +143,46 @@ public:
         const char* mongosStageName =
             ClusterExplain::getStageNameForReadOp(shardResponses.size(), cmdObj);
 
-        return ClusterExplain::buildExplainResult(
-            opCtx,
-            ClusterExplain::downconvert(opCtx, shardResponses),
-            mongosStageName,
-            millisElapsed,
-            out);
+        try {
+            uassertStatusOK(ClusterExplain::buildExplainResult(
+                opCtx,
+                ClusterExplain::downconvert(opCtx, shardResponses),
+                mongosStageName,
+                millisElapsed,
+                out));
+            return Status::OK();
+        } // this may throw a result parse exception indicating that we likely have a view underneath (shards can't help us in host mode)
+        catch (const ExceptionFor<ErrorCodes::FailedToParse>& ex) {
+            if (! serverGlobalParams.hostModeRouterEnabled)
+                throw;
+
+            auto parsedDistinct = ParsedDistinct::parse(
+                opCtx, nss, cmdObj, ExtensionsCallbackNoop(), true);
+            if (!parsedDistinct.isOK()) {
+                return parsedDistinct.getStatus();
+            }
+
+            auto aggCmdOnView = parsedDistinct.getValue().asAggregationCommand();
+            if (!aggCmdOnView.isOK()) {
+                return aggCmdOnView.getStatus();
+            }
+
+            auto aggRequestOnView =
+                AggregationRequest::parseFromBSON(nss, aggCmdOnView.getValue(), verbosity);
+            if (!aggRequestOnView.isOK()) {
+                return aggRequestOnView.getStatus();
+            }
+
+            ClusterAggregate::Namespaces nsStruct;
+            nsStruct.requestedNss = std::move(nss);
+            nsStruct.executionNss = std::move(nss);
+
+            auto aggRequest = aggRequestOnView.getValue();
+            auto aggCmd = aggRequest.serializeToCommandObj().toBson();
+
+            return ClusterAggregate::runAggregate(
+                opCtx, nsStruct, aggRequest, aggCmd, out);
+        }
     }
 
     bool run(OperationContext* opCtx,

@@ -55,31 +55,47 @@ class ShardedClusterFixture(interface.Fixture):  # pylint: disable=too-many-inst
         self._dbpath_prefix = os.path.join(self._dbpath_prefix, config.FIXTURE_SUBDIR)
 
         self.configsvr = None
+        self.hostsvr = None
         self.mongos = []
         self.shards = []
 
     def setup(self):
         """Set up the sharded cluster."""
-        if self.configsvr is None:
-            self.configsvr = self._new_configsvr()
+        # if self.configsvr is None:
+        #     self.configsvr = self._new_configsvr()
 
-        self.configsvr.setup()
+        # self.configsvr.setup()
 
-        if not self.shards:
-            for i in xrange(self.num_shards):
-                if self.num_rs_nodes_per_shard is None:
-                    shard = self._new_standalone_shard(i)
-                elif isinstance(self.num_rs_nodes_per_shard, int):
-                    if self.num_rs_nodes_per_shard <= 0:
-                        raise ValueError("num_rs_nodes_per_shard must be a positive integer")
-                    shard = self._new_rs_shard(i, self.num_rs_nodes_per_shard)
-                else:
-                    raise TypeError("num_rs_nodes_per_shard must be an integer or None")
-                self.shards.append(shard)
+        # if not self.shards:
+        #     for i in xrange(self.num_shards):
+        #         if self.num_rs_nodes_per_shard is None:
+        #             shard = self._new_standalone_shard(i)
+        #         elif isinstance(self.num_rs_nodes_per_shard, int):
+        #             if self.num_rs_nodes_per_shard <= 0:
+        #                 raise ValueError("num_rs_nodes_per_shard must be a positive integer")
+        #             shard = self._new_rs_shard(i, self.num_rs_nodes_per_shard)
+        #         else:
+        #             raise TypeError("num_rs_nodes_per_shard must be an integer or None")
+        #         self.shards.append(shard)
 
-        # Start up each of the shards
-        for shard in self.shards:
-            shard.setup()
+        # # Start up each of the shards
+        # for shard in self.shards:
+        #     shard.setup()
+
+        #just do a single shard
+        if not self.hostsvr:
+            if self.num_rs_nodes_per_shard is None:
+                shard = self._new_rs_shard(0, 1)
+            elif isinstance(self.num_rs_nodes_per_shard, int):
+                if self.num_rs_nodes_per_shard <= 0:
+                    raise ValueError("num_rs_nodes_per_shard must be a positive integer")
+                shard = self._new_rs_shard(0, self.num_rs_nodes_per_shard)
+            else:
+                raise TypeError("num_rs_nodes_per_shard must be an integer or None")
+            self.shards.append(shard)
+            self.hostsvr = shard
+
+        self.hostsvr.setup()
 
     def await_ready(self):
         """Block until the fixture can be used for testing."""
@@ -109,30 +125,30 @@ class ShardedClusterFixture(interface.Fixture):  # pylint: disable=too-many-inst
         self._auth_to_db(client)
 
         # Turn off the balancer if it is not meant to be enabled.
-        if not self.enable_balancer:
-            self.stop_balancer()
+        # if not self.enable_balancer:
+        #     self.stop_balancer()
 
         # Turn off autosplit if it is not meant to be enabled.
-        if not self.enable_autosplit:
-            wc = pymongo.WriteConcern(w="majority", wtimeout=30000)
-            coll = client.config.get_collection("settings", write_concern=wc)
-            coll.update_one({"_id": "autosplit"}, {"$set": {"enabled": False}}, upsert=True)
+        # if not self.enable_autosplit:
+        #     wc = pymongo.WriteConcern(w="majority", wtimeout=30000)
+        #     coll = client.config.get_collection("settings", write_concern=wc)
+        #     coll.update_one({"_id": "autosplit"}, {"$set": {"enabled": False}}, upsert=True)
 
         # Inform mongos about each of the shards
-        for shard in self.shards:
-            self._add_shard(client, shard)
+        # for shard in self.shards:
+        #     self._add_shard(client, shard)
 
         # Ensure that all CSRS nodes are up to date. This is strictly needed for tests that use
         # multiple mongoses. In those cases, the first mongos initializes the contents of the config
         # database, but without waiting for those writes to replicate to all the config servers then
         # the secondary mongoses risk reading from a stale config server and seeing an empty config
         # database.
-        self.configsvr.await_last_op_committed()
+        # self.configsvr.await_last_op_committed()
 
         # Enable sharding on each of the specified databases
-        for db_name in self.enable_sharding:
-            self.logger.info("Enabling sharding for '%s' database...", db_name)
-            client.admin.command({"enablesharding": db_name})
+        # for db_name in self.enable_sharding:
+        #     self.logger.info("Enabling sharding for '%s' database...", db_name)
+        #     client.admin.command({"enablesharding": db_name})
 
         # Ensure that the sessions collection gets auto-sharded by the config server
         if self.configsvr is not None:
@@ -170,8 +186,8 @@ class ShardedClusterFixture(interface.Fixture):  # pylint: disable=too-many-inst
             self.logger.warning("All members of the sharded cluster were expected to be running, "
                                 "but weren't.")
 
-        if self.enable_balancer:
-            self.stop_balancer()
+        # if self.enable_balancer:
+        #     self.stop_balancer()
 
         teardown_handler = interface.FixtureTeardownHandler(self.logger)
 
@@ -192,8 +208,7 @@ class ShardedClusterFixture(interface.Fixture):  # pylint: disable=too-many-inst
 
     def is_running(self):
         """Return true if all nodes in the cluster are all still operating."""
-        return (self.configsvr is not None and self.configsvr.is_running()
-                and all(shard.is_running() for shard in self.shards)
+        return (self.hostsvr is not None and self.hostsvr.is_running()
                 and all(mongos.is_running() for mongos in self.mongos))
 
     def get_internal_connection_string(self):
@@ -251,7 +266,7 @@ class ShardedClusterFixture(interface.Fixture):  # pylint: disable=too-many-inst
 
         mongod_options = self.mongod_options.copy()
         mongod_options.update(shard_options.pop("mongod_options", {}))
-        mongod_options["shardsvr"] = ""
+        # mongod_options["verbose"] = ""
         mongod_options["dbpath"] = os.path.join(self._dbpath_prefix, "shard{}".format(index))
         mongod_options["replSet"] = ShardedClusterFixture._SHARD_REPLSET_NAME_PREFIX + str(index)
 
@@ -273,7 +288,7 @@ class ShardedClusterFixture(interface.Fixture):  # pylint: disable=too-many-inst
 
         mongod_options = self.mongod_options.copy()
         mongod_options.update(shard_options.pop("mongod_options", {}))
-        mongod_options["shardsvr"] = ""
+        # mongod_options["shardsvr"] = ""
         mongod_options["dbpath"] = os.path.join(self._dbpath_prefix, "shard{}".format(index))
 
         return standalone.MongoDFixture(
@@ -297,7 +312,9 @@ class ShardedClusterFixture(interface.Fixture):  # pylint: disable=too-many-inst
         mongos_logger = self.logger.new_fixture_node_logger(logger_name)
 
         mongos_options = self.mongos_options.copy()
-        mongos_options["configdb"] = self.configsvr.get_internal_connection_string()
+        # mongos_options["configdb"] = self.configsvr.get_internal_connection_string()
+        mongos_options["hostdb"] = self.hostsvr.get_internal_connection_string()
+        mongos_options["verbose"] = ""
 
         return _MongoSFixture(mongos_logger, self.job_num, mongos_executable=self.mongos_executable,
                               mongos_options=mongos_options)

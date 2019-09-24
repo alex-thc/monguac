@@ -118,7 +118,9 @@ std::vector<Strategy::CommandResult> ClusterExplain::downconvert(
                     response.shardId, ConnectionString(*response.shardHostAndPort), result);
                 continue;
             }
-        }
+        } else
+            status = response.swResponse.getStatus();
+
         // Convert the error status back into the format of a command result.
         BSONObjBuilder statusObjBob;
         CommandHelpers::appendCommandStatusNoThrow(statusObjBob, status);
@@ -172,11 +174,20 @@ Status ClusterExplain::validateShardResults(const vector<Strategy::CommandResult
         }
 
         if (Object != shardResults[i].result["queryPlanner"].type()) {
-            return Status(ErrorCodes::OperationFailed,
-                          str::stream() << "Explain command on shard "
-                                        << shardResults[i].target.toString()
-                                        << " failed, caused by: "
-                                        << shardResults[i].result);
+            // we may encounter this in host mode when shards can't tell us that we're working on a view
+            // and we'll get explain output in the agg format, not regular find
+            if (Array == shardResults[i].result["stages"].type())
+                return Status(ErrorCodes::FailedToParse,
+                            str::stream() << "Explain command on shard "
+                                            << shardResults[i].target.toString()
+                                            << " came back with an unexpected structure: "
+                                            << shardResults[i].result);
+            else
+                return Status(ErrorCodes::OperationFailed,
+                            str::stream() << "Explain command on shard "
+                                            << shardResults[i].target.toString()
+                                            << " failed, caused by: "
+                                            << shardResults[i].result);
         }
 
         if (shardResults[i].result.hasField("executionStats")) {

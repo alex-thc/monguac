@@ -245,9 +245,11 @@ private:
                  BatchedCommandRequest& batchedRequest,
                  BSONObjBuilder& result) const {
         auto db = batchedRequest.getNS().db();
-        if (db != NamespaceString::kAdminDb && db != NamespaceString::kConfigDb) {
-            batchedRequest.setAllowImplicitCreate(false);
-        }
+
+        if (! serverGlobalParams.hostModeRouterEnabled)
+            if (db != NamespaceString::kAdminDb && db != NamespaceString::kConfigDb) {
+                batchedRequest.setAllowImplicitCreate(false);
+            }
 
         BatchWriteExecStats stats;
         BatchedCommandResponse response;

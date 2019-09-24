@@ -58,6 +58,7 @@
 #include "mongo/s/catalog/dist_lock_catalog_impl.h"
 #include "mongo/s/catalog/replset_dist_lock_manager.h"
 #include "mongo/s/catalog/sharding_catalog_client_impl.h"
+#include "mongo/s/catalog/sharding_catalog_client_host.h"
 #include "mongo/s/catalog_cache.h"
 #include "mongo/s/client/shard_factory.h"
 #include "mongo/s/client/shard_registry.h"
@@ -71,6 +72,11 @@
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/net/socket_utils.h"
+#include "mongo/db/auth/security_file.h"
+#include "mongo/db/auth/internal_user_auth.h"
+#include "mongo/bson/bsonobj.h"
+#include "mongo/db/auth/sasl_command_constants.h"
+#include "mongo/util/password_digest.h"
 
 namespace mongo {
 
@@ -109,6 +115,10 @@ static constexpr auto kRetryInterval = Seconds{2};
 
 std::unique_ptr<ShardingCatalogClient> makeCatalogClient(ServiceContext* service,
                                                          StringData distLockProcessId) {
+
+    if (serverGlobalParams.hostModeRouterEnabled)
+        return stdx::make_unique<ShardingCatalogClientHost>(nullptr);
+
     auto distLockCatalog = stdx::make_unique<DistLockCatalogImpl>();
     auto distLockManager =
         stdx::make_unique<ReplSetDistLockManager>(service,
@@ -168,16 +178,58 @@ std::string generateDistLockProcessId(OperationContext* opCtx) {
         << ':' << rng->nextInt64();
 }
 
+bool _setUpHostInternalUser(const std::string& hostInternalUser) {
+    const std::string& filename = serverGlobalParams.keyFile;
+
+    StatusWith<std::string> keyString = mongo::readSecurityFile(filename);
+    if (!keyString.isOK()) {
+        log() << keyString.getStatus().reason();
+        return false;
+    }
+
+    std::string str = std::move(keyString.getValue());
+    const unsigned long long keyLength = str.size();
+    if (keyLength < 6 || keyLength > 1024) {
+        log() << " security key in " << filename << " has length " << keyLength
+              << ", must be between 6 and 1024 chars";
+        return false;
+    }
+
+    const auto password =
+        mongo::createPasswordDigest(hostInternalUser, str);
+
+    int clusterAuthMode = serverGlobalParams.clusterAuthMode.load();
+    if (clusterAuthMode == ServerGlobalParams::ClusterAuthMode_keyFile ||
+        clusterAuthMode == ServerGlobalParams::ClusterAuthMode_sendKeyFile) {
+        setInternalUserAuthParams(
+            BSON(saslCommandMechanismFieldName << "SCRAM-SHA-1" << saslCommandUserDBFieldName
+                                               << "admin"
+                                               << saslCommandUserFieldName
+                                               << hostInternalUser
+                                               << saslCommandPasswordFieldName
+                                               << password
+                                               << saslCommandDigestPasswordFieldName
+                                               << false));
+    }
+
+    return true;
+}
+
 Status initializeGlobalShardingState(OperationContext* opCtx,
                                      const ConnectionString& configCS,
+                                     const ConnectionString& hostCS,
+                                     const std::string& hostInternalUser,
                                      StringData distLockProcessId,
                                      std::unique_ptr<ShardFactory> shardFactory,
                                      std::unique_ptr<CatalogCache> catalogCache,
                                      rpc::ShardingEgressMetadataHookBuilder hookBuilder,
                                      boost::optional<size_t> taskExecutorPoolSize) {
-    if (configCS.type() == ConnectionString::INVALID) {
+    if (!serverGlobalParams.hostModeRouterEnabled && configCS.type() == ConnectionString::INVALID) {
         return {ErrorCodes::BadValue, "Unrecognized connection string."};
     }
+
+    if (serverGlobalParams.hostModeRouterEnabled && hostInternalUser.length() > 0)
+        _setUpHostInternalUser(hostInternalUser);
 
     // We don't set the ConnectionPool's static const variables to be the default value in
     // MONGO_EXPORT_STARTUP_SERVER_PARAMETER because it's not guaranteed to be initialized.
@@ -232,7 +284,7 @@ Status initializeGlobalShardingState(OperationContext* opCtx,
     grid->init(
         makeCatalogClient(opCtx->getServiceContext(), distLockProcessId),
         std::move(catalogCache),
-        stdx::make_unique<ShardRegistry>(std::move(shardFactory), configCS),
+        stdx::make_unique<ShardRegistry>(std::move(shardFactory), configCS, hostCS),
         stdx::make_unique<ClusterCursorManager>(getGlobalServiceContext()->getPreciseClockSource()),
         stdx::make_unique<BalancerConfiguration>(),
         std::move(executorPool),
@@ -270,8 +322,9 @@ Status waitForShardRegistryReload(OperationContext* opCtx) {
         }
 
         try {
-            uassertStatusOK(ClusterIdentityLoader::get(opCtx)->loadClusterId(
-                opCtx, repl::ReadConcernLevel::kMajorityReadConcern));
+            if (! serverGlobalParams.hostModeRouterEnabled)
+                uassertStatusOK(ClusterIdentityLoader::get(opCtx)->loadClusterId(
+                    opCtx, repl::ReadConcernLevel::kMajorityReadConcern));
             if (Grid::get(opCtx)->shardRegistry()->isUp()) {
                 return Status::OK();
             }

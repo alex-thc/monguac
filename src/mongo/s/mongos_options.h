@@ -49,6 +49,10 @@ namespace moe = mongo::optionenvironment;
 struct MongosGlobalParams {
     // The config server connection string
     ConnectionString configdbs;
+    // Host shard
+    ConnectionString hostdbs;
+    // Internal user for host authentication
+    std::string hostInternalUser;
 };
 
 extern MongosGlobalParams mongosGlobalParams;

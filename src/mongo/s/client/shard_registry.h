@@ -87,9 +87,19 @@ public:
     std::shared_ptr<Shard> getConfigShard() const;
 
     /**
+     * Returns host shard.
+     */
+    std::shared_ptr<Shard> getHostShard() const;
+
+    /**
      * Adds config shard.
      */
     void addConfigShard(std::shared_ptr<Shard>);
+
+    /**
+     * Adds host shard.
+     */
+    void addHostShard(std::shared_ptr<Shard>);
 
     void getAllShardIds(std::set<ShardId>& result) const;
 
@@ -130,6 +140,9 @@ private:
 
     // store configShard separately to always have a reference
     std::shared_ptr<Shard> _configShard;
+
+    // store hostShard separately to always have a reference
+    std::shared_ptr<Shard> _hostShard;
 };
 
 /**
@@ -148,13 +161,19 @@ public:
     static const ShardId kConfigServerShardId;
 
     /**
+     * A ShardId for the host servers.
+     */
+    static const ShardId kHostServerShardId;
+
+    /**
      * Instantiates a new shard registry.
      *
      * @param shardFactory Makes shards
      * @param configServerCS ConnectionString used for communicating with the config servers
      */
     ShardRegistry(std::unique_ptr<ShardFactory> shardFactory,
-                  const ConnectionString& configServerCS);
+                  const ConnectionString& configServerCS,
+                  const ConnectionString& hostServerCS);
 
     ~ShardRegistry();
     /**
@@ -216,6 +235,11 @@ public:
      * Returns shared pointer to the shard object representing the config servers.
      */
     std::shared_ptr<Shard> getConfigShard() const;
+
+   /**
+     * Returns shared pointer to the shard object representing the host shard.
+     */
+    std::shared_ptr<Shard> getHostShard() const;
 
     /**
      * Instantiates a new detached shard connection, which does not appear in the list of shards
@@ -288,6 +312,9 @@ private:
      * shard
      */
     ConnectionString _initConfigServerCS;
+
+    ConnectionString _initHostServerCS;
+
     void _internalReload(const executor::TaskExecutor::CallbackArgs& cbArgs);
     ShardRegistryData _data;
 

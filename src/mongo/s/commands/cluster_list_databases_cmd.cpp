@@ -114,7 +114,8 @@ public:
 
         std::vector<ShardId> shardIds;
         shardRegistry->getAllShardIdsNoReload(&shardIds);
-        shardIds.emplace_back(ShardRegistry::kConfigServerShardId);
+        if (! serverGlobalParams.hostModeRouterEnabled) // don't look at config server if in host mode
+            shardIds.emplace_back(ShardRegistry::kConfigServerShardId);
 
         // { filter: matchExpression }.
         auto filteredCmd = CommandHelpers::filterCommandRequestForPassthrough(cmdObj);
@@ -141,14 +142,16 @@ public:
 
                 const auto name = dbObj["name"].String();
 
-                // If this is the admin db, only collect its stats from the config servers.
-                if (name == "admin" && !s->isConfig()) {
-                    continue;
-                }
+                if (! serverGlobalParams.hostModeRouterEnabled) {
+                    // If this is the admin db, only collect its stats from the config servers.
+                    if (name == "admin" && !s->isConfig()) {
+                        continue;
+                    }
 
-                // We don't collect config server info for dbs other than "admin" and "config".
-                if (s->isConfig() && name != "config" && name != "admin") {
-                    continue;
+                    // We don't collect config server info for dbs other than "admin" and "config".
+                    if (s->isConfig() && name != "config" && name != "admin") {
+                        continue;
+                    }
                 }
 
                 const long long size = dbObj["sizeOnDisk"].numberLong();

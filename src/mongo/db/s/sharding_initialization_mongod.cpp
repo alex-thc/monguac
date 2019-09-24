@@ -388,6 +388,8 @@ void initializeGlobalShardingStateForMongoD(OperationContext* opCtx,
     uassertStatusOK(initializeGlobalShardingState(
         opCtx,
         configCS,
+        configCS,    //TODO:XXZ (we don't care about what we pass here)
+        "",
         distLockProcessId,
         std::move(shardFactory),
         stdx::make_unique<CatalogCache>(CatalogCacheLoader::get(opCtx)),

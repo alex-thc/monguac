@@ -39,6 +39,7 @@
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
 #include "mongo/util/scopeguard.h"
+#include "mongo/s/commands/cluster_commands_helpers.h"
 
 namespace mongo {
 namespace {
@@ -74,6 +75,13 @@ public:
 
         const NamespaceString nss(CommandHelpers::parseNsCollectionRequired(dbname, cmdObj));
 
+        // direct path for host mode
+        if (serverGlobalParams.hostModeRouterEnabled) {
+            _dropUnshardedCollectionFromShard(
+                opCtx, Grid::get(opCtx)->shardRegistry()->getHostShard()->getId(), nss, &result);
+            return true;
+        }
+
         // Invalidate the routing table cache entry for this collection so that we reload it the
         // next time it is accessed, even if sending the command to the config server fails due
         // to e.g. a NetworkError.
@@ -90,8 +98,50 @@ public:
             Shard::RetryPolicy::kIdempotent));
 
         CommandHelpers::filterCommandReplyForPassthrough(cmdResponse.response, &result);
+        
         return true;
     }
+
+private:
+    static void _dropUnshardedCollectionFromShard(OperationContext* opCtx,
+                                                  const ShardId& shardId,
+                                                  const NamespaceString& nss,
+                                                  BSONObjBuilder* result) {
+
+        const auto shardRegistry = Grid::get(opCtx)->shardRegistry();
+
+        const auto dropCommandBSON = [shardRegistry, opCtx, &shardId, &nss] {
+            BSONObjBuilder builder;
+            builder.append("drop", nss.coll());
+
+            if (!opCtx->getWriteConcern().usedDefault) {
+                builder.append(WriteConcernOptions::kWriteConcernField,
+                               opCtx->getWriteConcern().toBSON());
+            }
+
+            return builder.obj();
+        }();
+
+        const auto shard = uassertStatusOK(shardRegistry->getShard(opCtx, shardId));
+
+        auto cmdDropResult = uassertStatusOK(shard->runCommandWithFixedRetryAttempts(
+            opCtx,
+            ReadPreferenceSetting{ReadPreference::PrimaryOnly},
+            nss.db().toString(),
+            dropCommandBSON,
+            Shard::RetryPolicy::kIdempotent));
+
+        // If the collection doesn't exist, consider the drop a success.
+        if (cmdDropResult.commandStatus == ErrorCodes::NamespaceNotFound) {
+            return;
+        }
+
+        uassertStatusOK(cmdDropResult.commandStatus);
+        if (!cmdDropResult.writeConcernStatus.isOK()) {
+            appendWriteConcernErrorToCmdResponse(
+                shardId, cmdDropResult.response["writeConcernError"], *result);
+        }
+    };
 
 } clusterDropCmd;
 

@@ -75,6 +75,9 @@ public:
              const std::string& dbname,
              const BSONObj& cmdObj,
              BSONObjBuilder& result) override {
+        if (serverGlobalParams.hostModeRouterEnabled)
+            uasserted(ErrorCodes::CommandNotSupported, "comand not allowed in this configuration");
+
         uassert(ErrorCodes::TypeMismatch,
                 str::stream() << "Field '" << cmdObj.firstElement().fieldName()
                               << "' must be of type string",

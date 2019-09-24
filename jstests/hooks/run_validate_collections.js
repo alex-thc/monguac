@@ -16,7 +16,7 @@
     } else if (topology.type === Topology.kReplicaSet) {
         hostList.push(...topology.nodes);
     } else if (topology.type === Topology.kShardedCluster) {
-        hostList.push(...topology.configsvr.nodes);
+        // hostList.push(...topology.configsvr.nodes);
 
         for (let shardName of Object.keys(topology.shards)) {
             const shard = topology.shards[shardName];

@@ -310,7 +310,12 @@ std::vector<RemoteCursor> establishShardCursors(
     } else {
         // The collection is unsharded. Target only the primary shard for the database.
         // Don't append shard version info when contacting the config servers.
-        requests.emplace_back(routingInfo->db().primaryId(),
+        // Ignore shard version totally when in host mode.
+        if (serverGlobalParams.hostModeRouterEnabled)
+            requests.emplace_back(routingInfo->db().primaryId(),
+                              cmdObj);
+        else  
+            requests.emplace_back(routingInfo->db().primaryId(),
                               !routingInfo->db().primary()->isConfig()
                                   ? appendShardVersion(cmdObj, ChunkVersion::UNSHARDED())
                                   : cmdObj);
@@ -1078,7 +1083,8 @@ Status ClusterAggregate::aggPassthrough(OperationContext* opCtx,
         opCtx,
         ReadPreferenceSetting::get(opCtx),
         namespaces.executionNss.db().toString(),
-        !shard->isConfig() ? appendShardVersion(std::move(cmdObj), ChunkVersion::UNSHARDED())
+        (!shard->isConfig() && !serverGlobalParams.hostModeRouterEnabled) 
+                           ? appendShardVersion(std::move(cmdObj), ChunkVersion::UNSHARDED())
                            : std::move(cmdObj),
         Shard::RetryPolicy::kIdempotent));
 

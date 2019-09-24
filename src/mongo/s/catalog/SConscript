@@ -122,6 +122,17 @@ env.Library(
     ]
 )
 
+env.Library(
+    target='sharding_catalog_client_host',
+    source=[
+        'sharding_catalog_client_host.cpp',
+    ],
+    LIBDEPS=[
+        'dist_lock_manager_mock',
+        'sharding_catalog_client',
+    ]
+)
+
 env.CppUnitTest(
     target='replset_dist_lock_manager_test',
     source=[

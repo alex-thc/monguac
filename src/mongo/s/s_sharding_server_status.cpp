@@ -55,8 +55,9 @@ public:
 
         BSONObjBuilder result;
 
-        result.append("configsvrConnectionString",
-                      shardRegistry->getConfigServerConnectionString().toString());
+        if (! serverGlobalParams.hostModeRouterEnabled)
+            result.append("configsvrConnectionString",
+                        shardRegistry->getConfigServerConnectionString().toString());
 
         grid->configOpTime().append(&result, "lastSeenConfigServerOpTime");
 

@@ -184,7 +184,8 @@ coll.remove({});
 var wRes = assert.writeError(coll.insert({foo: "bar"}, {writeConcern: {w: "invalid"}}));
 var res = assert.commandWorked(db.isMaster());
 var replSet = res.hasOwnProperty("setName");
-if (!replSet && coll.getMongo().writeMode() == "commands")
-    assert.eq(coll.count(), 0, "not-replset || command mode");
-else  // compatibility,
+//TODO: XXZ
+// if (!replSet && coll.getMongo().writeMode() == "commands")
+//     assert.eq(coll.count(), 0, "not-replset || command mode");
+// else  // compatibility,
     assert.eq(coll.count(), 1, "replset || non-command mode");

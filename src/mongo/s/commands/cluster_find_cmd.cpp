@@ -28,6 +28,8 @@
  *    it in the license file.
  */
 
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kQuery
+
 #include "mongo/platform/basic.h"
 
 #include <boost/optional.hpp>
@@ -46,6 +48,8 @@
 #include "mongo/s/commands/cluster_explain.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/query/cluster_find.h"
+#include "mongo/util/log.h"
+
 
 namespace mongo {
 namespace {
@@ -180,6 +184,35 @@ public:
                 opCtx, nsStruct, resolvedAggRequest, resolvedAggCmd, out);
             uassertStatusOK(status);
             return status;
+        }  // this may throw a result parse exception indicating that we likely have a view underneath (shards can't help us in host mode)
+        catch (const ExceptionFor<ErrorCodes::FailedToParse>& ex) {
+            if (! serverGlobalParams.hostModeRouterEnabled)
+                throw;
+
+            out->resetToEmpty();
+
+            auto aggCmdOnView = qr.asAggregationCommand();
+            if (!aggCmdOnView.isOK()) {
+                return aggCmdOnView.getStatus();
+            }
+
+            auto aggRequestOnView =
+                AggregationRequest::parseFromBSON(nss, aggCmdOnView.getValue(), verbosity);
+            if (!aggRequestOnView.isOK()) {
+                return aggRequestOnView.getStatus();
+            }
+
+            ClusterAggregate::Namespaces nsStruct;
+            nsStruct.requestedNss = std::move(nss);
+            nsStruct.executionNss = std::move(nss);
+
+            auto aggRequest = aggRequestOnView.getValue();
+            auto aggCmd = aggRequest.serializeToCommandObj().toBson();
+
+            auto status = ClusterAggregate::runAggregate(
+                opCtx, nsStruct, aggRequest, aggCmd, out);
+            uassertStatusOK(status);
+            return status;
         }
     }
 
@@ -237,6 +270,29 @@ public:
 
             auto status = ClusterAggregate::runAggregate(
                 opCtx, nsStruct, resolvedAggRequest, resolvedAggCmd, &result);
+            uassertStatusOK(status);
+            return true;
+        }
+        //TODO: XXZ - the failure may have come from parsing of meta-fields on a view in host mode
+        catch (const AssertionException& ex) {
+            if (!serverGlobalParams.hostModeRouterEnabled || (ex.codeString() != "Location16410"))
+                throw;
+
+            auto aggCmdOnView = cq.getValue()->getQueryRequest().asAggregationCommand();
+            uassertStatusOK(aggCmdOnView.getStatus());
+
+            auto aggRequestOnView = AggregationRequest::parseFromBSON(nss, aggCmdOnView.getValue());
+            uassertStatusOK(aggRequestOnView.getStatus());
+
+            ClusterAggregate::Namespaces nsStruct;
+            nsStruct.requestedNss = std::move(nss);
+            nsStruct.executionNss = std::move(nss);
+
+            auto aggRequest = aggRequestOnView.getValue();
+            auto aggCmd = aggRequest.serializeToCommandObj().toBson();
+
+            auto status = ClusterAggregate::runAggregate(
+                opCtx, nsStruct, aggRequest, aggCmd, &result);
             uassertStatusOK(status);
             return true;
         }

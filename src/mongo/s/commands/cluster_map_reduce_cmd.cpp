@@ -205,6 +205,11 @@ public:
             // Check if there is a custom output
             BSONObj customOut = outElmt.embeddedObject();
             shardedOutput = customOut.getBoolField("sharded");
+            
+            if (serverGlobalParams.hostModeRouterEnabled)
+                uassert(ErrorCodes::InvalidOptions,
+                            "cannot do sharded output on a hosted version",
+                            !shardedOutput);
 
             if (customOut.hasField("inline")) {
                 inlineOutput = true;
@@ -222,7 +227,10 @@ public:
                 }
 
                 if (customOut.hasField("db")) {
-                    customOutDB = true;
+                    // if customOutDB is set, we're going to do some sharding magic
+                    // but no need to do it in host mode
+                    if (! serverGlobalParams.hostModeRouterEnabled)
+                        customOutDB = true;
                     outDB = customOut.getField("db").str();
                 }
 
@@ -249,10 +257,11 @@ public:
 
         // Ensure that the output database doesn't reside on the config server
         auto outputDbInfo = uassertStatusOK(catalogCache->getDatabase(opCtx, outDB));
-        uassert(ErrorCodes::CommandNotSupported,
-                str::stream() << "Can not execute mapReduce with output database " << outDB
-                              << " which lives on config servers",
-                inlineOutput || outputDbInfo.primaryId() != "config");
+        if (! serverGlobalParams.hostModeRouterEnabled)
+            uassert(ErrorCodes::CommandNotSupported,
+                    str::stream() << "Can not execute mapReduce with output database " << outDB
+                                << " which lives on config servers",
+                    inlineOutput || outputDbInfo.primaryId() != "config");
 
         int64_t maxChunkSizeBytes = 0;
 

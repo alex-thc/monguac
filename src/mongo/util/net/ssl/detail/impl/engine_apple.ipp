@@ -44,6 +44,7 @@
 #include "mongo/util/net/ssl/detail/engine.hpp"
 #include "mongo/util/net/ssl/detail/stream_core.hpp"
 #include "mongo/util/net/ssl/error.hpp"
+#include <Security/SecureTransport.h>
 
 namespace asio {
 namespace ssl {

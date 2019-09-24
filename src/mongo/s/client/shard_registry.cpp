@@ -63,6 +63,7 @@
 #include "mongo/util/map_util.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/scopeguard.h"
+#include "mongo/s/mongos_options.h"
 
 namespace mongo {
 
@@ -87,9 +88,12 @@ const Seconds kRefreshPeriod(30);
 
 const ShardId ShardRegistry::kConfigServerShardId = ShardId("config");
 
+const ShardId ShardRegistry::kHostServerShardId = ShardId("shard");
+
 ShardRegistry::ShardRegistry(std::unique_ptr<ShardFactory> shardFactory,
-                             const ConnectionString& configServerCS)
-    : _shardFactory(std::move(shardFactory)), _initConfigServerCS(configServerCS) {}
+                             const ConnectionString& configServerCS,
+                             const ConnectionString& hostServerCS)
+    : _shardFactory(std::move(shardFactory)), _initConfigServerCS(configServerCS), _initHostServerCS(hostServerCS) {}
 
 ShardRegistry::~ShardRegistry() {
     shutdown();
@@ -112,6 +116,13 @@ StatusWith<shared_ptr<Shard>> ShardRegistry::getShard(OperationContext* opCtx,
                                                       const ShardId& shardId) {
     // If we know about the shard, return it.
     auto shard = _data.findByShardId(shardId);
+
+    // just a safety check
+    if (!shard && serverGlobalParams.hostModeRouterEnabled) {
+        severe() << "Unexpected ShardRegistry state: " << "Shard can't be null: " << shardId.toString();
+        fassertFailed(40985);
+    }
+
     if (shard) {
         return shard;
     }
@@ -157,6 +168,12 @@ shared_ptr<Shard> ShardRegistry::getConfigShard() const {
     return shard;
 }
 
+shared_ptr<Shard> ShardRegistry::getHostShard() const {
+    auto shard = _data.getHostShard();
+    invariant(shard);
+    return shard;
+}
+
 unique_ptr<Shard> ShardRegistry::createConnection(const ConnectionString& connStr) const {
     return _shardFactory->createUniqueShard(ShardId("<unnamed>"), connStr);
 }
@@ -174,6 +191,12 @@ void ShardRegistry::getAllShardIdsNoReload(vector<ShardId>* all) const {
 void ShardRegistry::getAllShardIds(OperationContext* opCtx, vector<ShardId>* all) {
     getAllShardIdsNoReload(all);
     if (all->empty()) {
+        // safety check
+        if (serverGlobalParams.hostModeRouterEnabled) {
+            severe() << "Unexpected ShardRegistry state: " << "No shards are found";
+            fassertFailed(40986);
+        }
+
         bool didReload = reload(opCtx);
         getAllShardIdsNoReload(all);
         // If we didn't do the reload ourselves, we should retry to ensure
@@ -206,12 +229,28 @@ void ShardRegistry::updateReplSetHosts(const ConnectionString& newConnString) {
 
 void ShardRegistry::init() {
     stdx::unique_lock<stdx::mutex> reloadLock(_reloadMutex);
-    invariant(_initConfigServerCS.isValid());
-    auto configShard =
-        _shardFactory->createShard(ShardRegistry::kConfigServerShardId, _initConfigServerCS);
-    _data.addConfigShard(configShard);
-    // set to invalid so it cant be started more than once.
-    _initConfigServerCS = ConnectionString();
+
+    if (! serverGlobalParams.hostModeRouterEnabled) {
+
+        invariant(_initConfigServerCS.isValid());
+        auto configShard =
+            _shardFactory->createShard(ShardRegistry::kConfigServerShardId, _initConfigServerCS);
+        _data.addConfigShard(configShard);
+        // set to invalid so it cant be started more than once.
+        _initConfigServerCS = ConnectionString();
+
+    } else {
+        auto shardHostStatus = ConnectionString::parse(_initHostServerCS.toString());
+
+        if (!shardHostStatus.isOK()) {
+            severe() << "Unable to parse shard host " << shardHostStatus.getStatus().toString();
+            fassertFailed(40989);
+        }
+        auto hostShard = _shardFactory->createShard(ShardRegistry::kHostServerShardId,
+                                                shardHostStatus.getValue());
+        LOG(1) << "Created host shard " << hostShard->toString() << " for " << ShardRegistry::kHostServerShardId.toString(); 
+        _data.addHostShard(hostShard);
+    }
 }
 
 void ShardRegistry::startup(OperationContext* opCtx) {
@@ -220,6 +259,12 @@ void ShardRegistry::startup(OperationContext* opCtx) {
 
     auto hookList = stdx::make_unique<rpc::EgressMetadataHookList>();
     hookList->addHook(stdx::make_unique<rpc::LogicalTimeMetadataHook>(opCtx->getServiceContext()));
+
+    // in host mode starting up is a no-brainer
+    if (serverGlobalParams.hostModeRouterEnabled) {
+        _isUp = true;
+        return;
+    }
 
     // construct task executor
     auto net = executor::makeNetworkInterface("ShardRegistryUpdater", nullptr, std::move(hookList));
@@ -284,6 +329,10 @@ bool ShardRegistry::isUp() const {
 }
 
 bool ShardRegistry::reload(OperationContext* opCtx) {
+    // noop for host mode
+    if (serverGlobalParams.hostModeRouterEnabled)
+        return true;
+
     stdx::unique_lock<stdx::mutex> reloadLock(_reloadMutex);
 
     if (_reloadState == ReloadState::Reloading) {
@@ -321,6 +370,7 @@ bool ShardRegistry::reload(OperationContext* opCtx) {
 
     ShardRegistryData currData(opCtx, _shardFactory.get());
     currData.addConfigShard(_data.getConfigShard());
+    currData.addHostShard(_data.getHostShard());
     _data.swap(currData);
 
     // Remove RSMs that are not in the catalog any more.
@@ -391,6 +441,7 @@ void ShardRegistry::replicaSetChangeConfigServerUpdateHook(const std::string& se
 ////////////// ShardRegistryData //////////////////
 
 ShardRegistryData::ShardRegistryData(OperationContext* opCtx, ShardFactory* shardFactory) {
+
     auto const catalogClient = Grid::get(opCtx)->catalogClient();
 
     auto readConcern = repl::ReadConcernLevel::kMajorityReadConcern;
@@ -448,6 +499,7 @@ void ShardRegistryData::swap(ShardRegistryData& other) {
     _rsLookup.swap(other._rsLookup);
     _hostLookup.swap(other._hostLookup);
     _configShard.swap(other._configShard);
+    _hostShard.swap(other._hostShard);
 }
 
 shared_ptr<Shard> ShardRegistryData::getConfigShard() const {
@@ -455,10 +507,21 @@ shared_ptr<Shard> ShardRegistryData::getConfigShard() const {
     return _configShard;
 }
 
+shared_ptr<Shard> ShardRegistryData::getHostShard() const {
+    stdx::lock_guard<stdx::mutex> lk(_mutex);
+    return _hostShard;
+}
+
 void ShardRegistryData::addConfigShard(std::shared_ptr<Shard> shard) {
     stdx::lock_guard<stdx::mutex> lk(_mutex);
     _configShard = shard;
     _addShard(lk, shard, true);
+}
+
+void ShardRegistryData::addHostShard(std::shared_ptr<Shard> shard) {
+    stdx::lock_guard<stdx::mutex> lk(_mutex);
+    _hostShard = shard; 
+    _addShard(WithLock::withoutLock(), shard, false);
 }
 
 shared_ptr<Shard> ShardRegistryData::findByRSName(const string& name) const {
@@ -545,6 +608,10 @@ void ShardRegistryData::_rebuildShard(WithLock lk,
     if (shard->isConfig()) {
         _configShard = shard;
     }
+
+    //TODO: XXZ (not sure if this is ever called in host mode, but leaving just in case)
+    if (serverGlobalParams.hostModeRouterEnabled)
+        _hostShard = shard;
 }
 
 void ShardRegistryData::_addShard(WithLock lk,

@@ -55,15 +55,15 @@
 
         const threads = [];
         try {
-            if (topology.configsvr.nodes.length > 1) {
-                const thread = new ScopedThread(
-                    checkReplicatedDataHashesThread, topology.configsvr.nodes, TestData);
-                threads.push(thread);
-                thread.start();
-            } else {
-                print('Skipping data consistency checks for 1-node CSRS: ' +
-                      tojsononeline(topology));
-            }
+            // if (topology.configsvr.nodes.length > 1) {
+            //     const thread = new ScopedThread(
+            //         checkReplicatedDataHashesThread, topology.configsvr.nodes, TestData);
+            //     threads.push(thread);
+            //     thread.start();
+            // } else {
+            //     print('Skipping data consistency checks for 1-node CSRS: ' +
+            //           tojsononeline(topology));
+            // }
 
             for (let shardName of Object.keys(topology.shards)) {
                 const shard = topology.shards[shardName];

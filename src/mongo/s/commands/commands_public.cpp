@@ -147,7 +147,7 @@ protected:
             opCtx,
             ReadPreferenceSetting::get(opCtx),
             dbName,
-            primaryShard->isConfig() ? filteredCmdObj : filteredCmdObjWithVersion,
+            (serverGlobalParams.hostModeRouterEnabled || primaryShard->isConfig())? filteredCmdObj : filteredCmdObjWithVersion,
             Shard::RetryPolicy::kIdempotent));
 
         uassert(ErrorCodes::IllegalOperation,

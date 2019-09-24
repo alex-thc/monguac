@@ -131,12 +131,20 @@ public:
         // Time how long it takes to run the explain command on the shard.
         Timer timer;
         BSONObjBuilder result;
-        _runCommand(opCtx,
-                    shard->getId(),
-                    (chunkMgr ? chunkMgr->getVersion(shard->getId()) : ChunkVersion::UNSHARDED()),
-                    nss,
-                    explainCmd,
-                    &result);
+        if (! serverGlobalParams.hostModeRouterEnabled)
+            _runCommand(opCtx,
+                        shard->getId(),
+                        (chunkMgr ? chunkMgr->getVersion(shard->getId()) : ChunkVersion::UNSHARDED()),
+                        nss,
+                        explainCmd,
+                        &result);
+        else
+            _runCommand(opCtx,
+                        shard->getId(),
+                        ChunkVersion::IGNORED(),
+                        nss,
+                        explainCmd,
+                        &result);
         const auto millisElapsed = timer.millis();
 
         Strategy::CommandResult cmdResult;
@@ -164,12 +172,20 @@ public:
         const auto routingInfo =
             uassertStatusOK(Grid::get(opCtx)->catalogCache()->getCollectionRoutingInfo(opCtx, nss));
         if (!routingInfo.cm()) {
-            _runCommand(opCtx,
-                        routingInfo.db().primaryId(),
-                        ChunkVersion::UNSHARDED(),
-                        nss,
-                        cmdObj,
-                        &result);
+            if (! serverGlobalParams.hostModeRouterEnabled)
+                _runCommand(opCtx,
+                            routingInfo.db().primaryId(),
+                            ChunkVersion::UNSHARDED(),
+                            nss,
+                            cmdObj,
+                            &result);
+            else
+                _runCommand(opCtx,
+                            routingInfo.db().primaryId(),
+                            ChunkVersion::IGNORED(),
+                            nss,
+                            cmdObj,
+                            &result);
             return true;
         }
 
@@ -201,10 +217,15 @@ private:
                             BSONObjBuilder* result) {
         const auto response = [&] {
             std::vector<AsyncRequestsSender::Request> requests;
-            requests.emplace_back(
-                shardId,
-                appendShardVersion(CommandHelpers::filterCommandRequestForPassthrough(cmdObj),
-                                   shardVersion));
+            if (ChunkVersion::isIgnoredVersion(shardVersion))
+                requests.emplace_back(
+                    shardId,
+                    CommandHelpers::filterCommandRequestForPassthrough(cmdObj));
+            else
+                requests.emplace_back(
+                    shardId,
+                    appendShardVersion(CommandHelpers::filterCommandRequestForPassthrough(cmdObj),
+                                    shardVersion));
 
             AsyncRequestsSender ars(opCtx,
                                     Grid::get(opCtx)->getExecutorPool()->getArbitraryExecutor(),

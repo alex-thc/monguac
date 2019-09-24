@@ -98,6 +98,8 @@ public:
                      const std::string& dbname,
                      const BSONObj& cmdObj,
                      BSONObjBuilder& result) {
+        if (serverGlobalParams.hostModeRouterEnabled)
+            uasserted(ErrorCodes::CommandNotSupported, "comand not allowed in this configuration");
 
         auto movePrimaryRequest = MovePrimary::parse(IDLParserErrorContext("MovePrimary"), cmdObj);
 

@@ -69,10 +69,27 @@ public:
              const std::string& dbname,
              const BSONObj& cmdObj,
              BSONObjBuilder& result) override {
+        // hardcoded response for host mode
+        if (serverGlobalParams.hostModeRouterEnabled) {
+            auto shardRegistry = Grid::get(opCtx)->shardRegistry();
+            auto shard = shardRegistry->getHostShard();
+
+            BSONArrayBuilder shardsArr(result.subarrayStart("shards"));
+            shardsArr.append(BSON("_id"
+                                << shard->getId().toString()
+                                << "host" 
+                                << shard->getConnString().toString()
+                                << "state"
+                                << "1"));
+            shardsArr.doneFast();
+
+            return true;
+        }
+
         const auto opTimeWithShards =
             uassertStatusOK(Grid::get(opCtx)->catalogClient()->getAllShards(
                 opCtx, repl::ReadConcernLevel::kMajorityReadConcern));
-
+        
         BSONArrayBuilder shardsArr(result.subarrayStart("shards"));
         for (const auto& shard : opTimeWithShards.value) {
             shardsArr.append(shard.toBSON());

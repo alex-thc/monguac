@@ -91,6 +91,17 @@ Status addMongosOptions(moe::OptionSection* options) {
                                        "Connection string for communicating with config servers:\n"
                                        "<config replset name>/<host1:port>,<host2:port>,[...]");
 
+    sharding_options.addOptionChaining("sharding.hostDB",
+                                       "hostdb",
+                                       moe::String,
+                                       "Connection string for communicating with the host replica set:\n"
+                                       "<replset name>/<host1:port>,<host2:port>,[...]");
+
+    sharding_options.addOptionChaining("security.hostInternalUser",
+                                       "hostInternalUser",
+                                       moe::String,
+                                       "Username override for the internal authentication to the host replica set");
+
     sharding_options.addOptionChaining(
         "replication.localPingThresholdMs",
         "localThreshold",
@@ -208,51 +219,111 @@ Status storeMongosOptions(const moe::Environment& params) {
                      "(\"noscripting\" and/or \"security.javascriptEnabled\" are set.)";
     }
 
-    if (!params.count("sharding.configDB")) {
-        return Status(ErrorCodes::BadValue, "error: no args for --configdb");
+    if (!params.count("sharding.hostDB") && params.count("security.hostInternalUser")) {
+        return Status(ErrorCodes::BadValue, "error: hostInternalUser can only be used with hostDB");
     }
 
-    std::string configdbString = params["sharding.configDB"].as<std::string>();
-
-    auto configdbConnectionString = ConnectionString::parse(configdbString);
-    if (!configdbConnectionString.isOK()) {
-        return configdbConnectionString.getStatus();
+    if (!params.count("security.keyFile") && params.count("security.hostInternalUser")) {
+        return Status(ErrorCodes::BadValue, "error: hostInternalUser can only be used with keyfile authentication");
     }
 
-    if (configdbConnectionString.getValue().type() != ConnectionString::SET) {
-        return Status(ErrorCodes::BadValue,
-                      str::stream() << "configdb supports only replica set connection string");
+    if (params.count("security.hostInternalUser")) {
+        mongosGlobalParams.hostInternalUser = params["security.hostInternalUser"].as<std::string>();
     }
 
-    std::vector<HostAndPort> seedServers;
-    bool resolvedSomeSeedSever = false;
-    for (const auto& host : configdbConnectionString.getValue().getServers()) {
-        seedServers.push_back(host);
-        if (!seedServers.back().hasPort()) {
-            seedServers.back() = HostAndPort{host.host(), ServerGlobalParams::ConfigServerPort};
+    if (!params.count("sharding.configDB") && !params.count("sharding.hostDB")) {
+        return Status(ErrorCodes::BadValue, "error: no args for --configdb or --hostdb");
+    }
+
+    if (params.count("sharding.configDB") && params.count("sharding.hostDB")) {
+        return Status(ErrorCodes::BadValue, "error: can't have both --configdb or --hostdb");
+    }
+
+    if (params.count("sharding.configDB")) {
+        std::string configdbString = params["sharding.configDB"].as<std::string>();
+
+        auto configdbConnectionString = ConnectionString::parse(configdbString);
+        if (!configdbConnectionString.isOK()) {
+            return configdbConnectionString.getStatus();
         }
-        if (!hostbyname(seedServers.back().host().c_str()).empty()) {
-            resolvedSomeSeedSever = true;
+
+        if (configdbConnectionString.getValue().type() != ConnectionString::SET) {
+            return Status(ErrorCodes::BadValue,
+                        str::stream() << "configdb supports only replica set connection string");
         }
-    }
-    if (!resolvedSomeSeedSever) {
-        if (!hostbyname(configdbConnectionString.getValue().getSetName().c_str()).empty()) {
-            warning() << "The replica set name \""
-                      << escape(configdbConnectionString.getValue().getSetName())
-                      << "\" resolves as a host name, but none of the servers in the seed list do. "
-                         "Did you reverse the replica set name and the seed list in "
-                      << escape(configdbConnectionString.getValue().toString()) << "?";
+
+        std::vector<HostAndPort> seedServers;
+        bool resolvedSomeSeedSever = false;
+        for (const auto& host : configdbConnectionString.getValue().getServers()) {
+            seedServers.push_back(host);
+            if (!seedServers.back().hasPort()) {
+                seedServers.back() = HostAndPort{host.host(), ServerGlobalParams::ConfigServerPort};
+            }
+            if (!hostbyname(seedServers.back().host().c_str()).empty()) {
+                resolvedSomeSeedSever = true;
+            }
+        }
+        if (!resolvedSomeSeedSever) {
+            if (!hostbyname(configdbConnectionString.getValue().getSetName().c_str()).empty()) {
+                warning() << "The replica set name \""
+                        << escape(configdbConnectionString.getValue().getSetName())
+                        << "\" resolves as a host name, but none of the servers in the seed list do. "
+                            "Did you reverse the replica set name and the seed list in "
+                        << escape(configdbConnectionString.getValue().toString()) << "?";
+            }
+        }
+
+        mongosGlobalParams.configdbs =
+            ConnectionString{configdbConnectionString.getValue().type(),
+                            seedServers,
+                            configdbConnectionString.getValue().getSetName()};
+
+        if (mongosGlobalParams.configdbs.getServers().size() < 3) {
+            warning() << "Running a sharded cluster with fewer than 3 config servers should only be "
+                        "done for testing purposes and is not recommended for production.";
         }
     }
 
-    mongosGlobalParams.configdbs =
-        ConnectionString{configdbConnectionString.getValue().type(),
-                         seedServers,
-                         configdbConnectionString.getValue().getSetName()};
+    if (params.count("sharding.hostDB")) {
+        std::string hostdbString = params["sharding.hostDB"].as<std::string>();
 
-    if (mongosGlobalParams.configdbs.getServers().size() < 3) {
-        warning() << "Running a sharded cluster with fewer than 3 config servers should only be "
-                     "done for testing purposes and is not recommended for production.";
+        auto hostdbConnectionString = ConnectionString::parse(hostdbString);
+        if (!hostdbConnectionString.isOK()) {
+            return hostdbConnectionString.getStatus();
+        }
+
+        if (hostdbConnectionString.getValue().type() != ConnectionString::SET) {
+            return Status(ErrorCodes::BadValue,
+                        str::stream() << "hostdb supports only replica set connection string");
+        }
+
+        std::vector<HostAndPort> seedServers;
+        bool resolvedSomeSeedSever = false;
+        for (const auto& host : hostdbConnectionString.getValue().getServers()) {
+            seedServers.push_back(host);
+            if (!seedServers.back().hasPort()) {
+                seedServers.back() = HostAndPort{host.host(), ServerGlobalParams::ConfigServerPort};
+            }
+            if (!hostbyname(seedServers.back().host().c_str()).empty()) {
+                resolvedSomeSeedSever = true;
+            }
+        }
+        if (!resolvedSomeSeedSever) {
+            if (!hostbyname(hostdbConnectionString.getValue().getSetName().c_str()).empty()) {
+                warning() << "The replica set name \""
+                        << escape(hostdbConnectionString.getValue().getSetName())
+                        << "\" resolves as a host name, but none of the servers in the seed list do. "
+                            "Did you reverse the replica set name and the seed list in "
+                        << escape(hostdbConnectionString.getValue().toString()) << "?";
+            }
+        }
+
+        mongosGlobalParams.hostdbs =
+            ConnectionString{hostdbConnectionString.getValue().type(),
+                            seedServers,
+                            hostdbConnectionString.getValue().getSetName()};
+
+        serverGlobalParams.hostModeRouterEnabled = true;
     }
 
     return Status::OK();

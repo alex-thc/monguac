@@ -141,6 +141,10 @@ Status waitForSigningKeys(OperationContext* opCtx) {
         // This should be true when shard registry is up
         invariant(shardRegistry->isUp());
 
+        // we don't wait if in host mode
+        if (serverGlobalParams.hostModeRouterEnabled)
+            return Status::OK();
+
         auto configCS = shardRegistry->getConfigServerConnectionString();
         auto rsm = ReplicaSetMonitor::get(configCS.getSetName());
         // mongod will set minWireVersion == maxWireVersion for isMaster requests from
@@ -283,6 +287,8 @@ Status initializeSharding(OperationContext* opCtx) {
     Status status = initializeGlobalShardingState(
         opCtx,
         mongosGlobalParams.configdbs,
+        mongosGlobalParams.hostdbs,
+        mongosGlobalParams.hostInternalUser,
         generateDistLockProcessId(opCtx),
         std::move(shardFactory),
         stdx::make_unique<CatalogCache>(CatalogCacheLoader::get(opCtx)),
@@ -366,8 +372,11 @@ ExitCode runMongosServer(ServiceContext* serviceContext) {
 
     shardConnectionPool.addHook(new ShardingConnectionHook(true, std::move(shardedHookList)));
 
-    ReplicaSetMonitor::setAsynchronousConfigChangeHook(
-        &ShardRegistry::replicaSetChangeConfigServerUpdateHook);
+    // we don't need to update config server in host mode
+    // no config server anyway
+    if (! serverGlobalParams.hostModeRouterEnabled)
+        ReplicaSetMonitor::setAsynchronousConfigChangeHook(
+            &ShardRegistry::replicaSetChangeConfigServerUpdateHook);
     ReplicaSetMonitor::setSynchronousConfigChangeHook(
         &ShardRegistry::replicaSetChangeShardRegistryUpdateHook);
 
@@ -412,8 +421,11 @@ ExitCode runMongosServer(ServiceContext* serviceContext) {
 
     // Construct the sharding uptime reporter after the startup parameters have been parsed in order
     // to ensure that it picks up the server port instead of reporting the default value.
-    shardingUptimeReporter.emplace();
-    shardingUptimeReporter->startPeriodicThread();
+    if (! serverGlobalParams.hostModeRouterEnabled)
+    {
+        shardingUptimeReporter.emplace();
+        shardingUptimeReporter->startPeriodicThread();
+    }
 
     clusterCursorCleanupJob.go();
 
@@ -500,19 +512,21 @@ ExitCode main(ServiceContext* serviceContext) {
     auto const shardingContext = Grid::get(serviceContext);
 
     // We either have a setting where all processes are in localhost or none are
-    std::vector<HostAndPort> configServers = mongosGlobalParams.configdbs.getServers();
-    for (std::vector<HostAndPort>::const_iterator it = configServers.begin();
-         it != configServers.end();
-         ++it) {
-        const HostAndPort& configAddr = *it;
+    if (! serverGlobalParams.hostModeRouterEnabled) {
+        std::vector<HostAndPort> configServers = mongosGlobalParams.configdbs.getServers();
+        for (std::vector<HostAndPort>::const_iterator it = configServers.begin();
+            it != configServers.end();
+            ++it) {
+            const HostAndPort& configAddr = *it;
 
-        if (it == configServers.begin()) {
-            shardingContext->setAllowLocalHost(configAddr.isLocalHost());
-        }
+            if (it == configServers.begin()) {
+                shardingContext->setAllowLocalHost(configAddr.isLocalHost());
+            }
 
-        if (configAddr.isLocalHost() != shardingContext->allowLocalHost()) {
-            log(LogComponent::kDefault) << "cannot mix localhost and ip addresses in configdbs";
-            return EXIT_BADOPTIONS;
+            if (configAddr.isLocalHost() != shardingContext->allowLocalHost()) {
+                log(LogComponent::kDefault) << "cannot mix localhost and ip addresses in configdbs";
+                return EXIT_BADOPTIONS;
+            }
         }
     }
 
